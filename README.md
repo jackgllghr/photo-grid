@@ -11,6 +11,7 @@ Small offline web app that takes a folder of photos and builds a numbered photo 
 - Multi-page output with configurable starting photo
 - Number overlay controls (position, size, colors)
 - Print stylesheet that outputs the grid cleanly
+- Print pipeline uses local `print.js` for consistent multi-page output
 - Local settings + crop transform persistence in `localStorage`
 - Imported photos persisted offline in browser `IndexedDB` between reloads
 - Zoom/crop is persisted per image and restored on reload

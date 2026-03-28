@@ -5,6 +5,7 @@
   const DB_NAME = "photo-grid-offline-v1";
   const DB_VERSION = 1;
   const PHOTO_STORE = "photos";
+  const PRINT_PAGE_MARGIN_MM = 8;
 
   const defaults = {
     rows: 3,
@@ -60,15 +61,14 @@
     resetTile: document.getElementById("resetTile"),
     resetAll: document.getElementById("resetAll"),
     printBtn: document.getElementById("printBtn"),
-    pagesRoot: document.getElementById("pagesRoot")
+    pagesRoot: document.getElementById("pagesRoot"),
+    printRoot: document.getElementById("printRoot")
   };
 
   start();
 
   async function start() {
     bindControls();
-    window.addEventListener("beforeprint", applyPrintSizing);
-    window.addEventListener("afterprint", clearPrintSizing);
     syncInputsFromState();
     render();
     await restorePhotosFromPersistence();
@@ -235,26 +235,146 @@
     });
 
     ui.printBtn.addEventListener("click", () => {
-      applyPrintSizing();
+      printWithPrintJs();
+    });
+  }
+
+  function printWithPrintJs() {
+    if (typeof window.printJS !== "function") {
       window.print();
+      return;
+    }
+
+    const printableId = "printRoot";
+    ui.printRoot.innerHTML = "";
+    const printMetrics = getPrintPageMetrics();
+    buildPrintPages(printMetrics);
+
+    window.printJS({
+      printable: printableId,
+      type: "html",
+      scanStyles: false,
+      showModal: false,
+      targetStyles: ["*"],
+      style: getPrintJsStyle(printMetrics)
     });
   }
 
-  function applyPrintSizing() {
-    const pages = ui.pagesRoot.querySelectorAll(".page-preview");
-    pages.forEach((page) => {
-      const width = page.getBoundingClientRect().width;
-      if (width > 0) {
-        page.style.height = `${(width * 210) / 297}px`;
+  function buildPrintPages(printMetrics) {
+    const pageCount = getPageCount();
+    const cellsPerPage = getCellsPerPage();
+    const startIndex = state.startPhoto - 1;
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const pageEl = document.createElement("div");
+      pageEl.className = "page-preview";
+      pageEl.style.setProperty("--num-color", state.numColor);
+      pageEl.style.setProperty("--num-bg", state.numBg);
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      const gridMetrics = applyPrintGridMetrics(grid, printMetrics);
+
+      for (let cell = 0; cell < cellsPerPage; cell += 1) {
+        const photoIndex = startIndex + pageIndex * cellsPerPage + cell;
+        const photo = state.photos[photoIndex];
+
+        const tile = document.createElement("div");
+        tile.className = "tile";
+
+        if (!photo) {
+          tile.classList.add("empty");
+          tile.textContent = "No photo";
+        } else {
+          const transform = getTransform(photo);
+          const fit = getFitMetrics(photo, transform.zoom);
+          const widthMm = (gridMetrics.cellWidthMm * fit.widthPct) / 100;
+          const heightMm = (gridMetrics.cellHeightMm * fit.heightPct) / 100;
+          const dxMm = (transform.x / 100) * gridMetrics.cellWidthMm;
+          const dyMm = (transform.y / 100) * gridMetrics.cellHeightMm;
+          tile.style.backgroundImage = `url("${photo.src}")`;
+          tile.style.backgroundRepeat = "no-repeat";
+          tile.style.backgroundSize = `${widthMm}mm ${heightMm}mm`;
+          tile.style.backgroundPosition = `calc(50% + ${dxMm}mm) calc(50% + ${dyMm}mm)`;
+        }
+
+        const badge = document.createElement("span");
+        badge.className = `tile-number ${state.numPosition}`;
+        badge.style.fontSize = `${state.numSizeMm}mm`;
+        badge.textContent = String(photoIndex + 1);
+        tile.appendChild(badge);
+
+        grid.appendChild(tile);
       }
-    });
+
+      pageEl.appendChild(grid);
+      ui.printRoot.appendChild(pageEl);
+    }
   }
 
-  function clearPrintSizing() {
-    const pages = ui.pagesRoot.querySelectorAll(".page-preview");
-    pages.forEach((page) => {
-      page.style.height = "";
-    });
+  function applyPrintGridMetrics(grid, printMetrics) {
+    const scaledMarginMm = state.marginMm * printMetrics.scale;
+    const scaledGapMm = state.gapMm * printMetrics.scale;
+
+    const contentWidthMm = Math.max(1, printMetrics.pageWidthMm - scaledMarginMm * 2);
+    const contentHeightMm = Math.max(1, printMetrics.pageHeightMm - scaledMarginMm * 2);
+
+    const gapsW = scaledGapMm * (state.cols - 1);
+    const gapsH = scaledGapMm * (state.rows - 1);
+
+    const cellWidthMm = Math.max(1, (contentWidthMm - gapsW) / state.cols);
+    const cellHeightMm = Math.max(1, (contentHeightMm - gapsH) / state.rows);
+
+    grid.style.position = "absolute";
+    grid.style.top = `${scaledMarginMm}mm`;
+    grid.style.left = `${scaledMarginMm}mm`;
+    grid.style.right = "auto";
+    grid.style.bottom = "auto";
+    grid.style.width = `${contentWidthMm}mm`;
+    grid.style.height = `${contentHeightMm}mm`;
+    grid.style.gap = `${scaledGapMm}mm`;
+    grid.style.gridTemplateColumns = `repeat(${state.cols}, ${cellWidthMm}mm)`;
+    grid.style.gridTemplateRows = `repeat(${state.rows}, ${cellHeightMm}mm)`;
+    grid.style.alignContent = "start";
+    grid.style.justifyContent = "start";
+
+    return { cellWidthMm, cellHeightMm };
+  }
+
+  function getPrintPageMetrics() {
+    const printableWidthMm = PAGE_MM.width - PRINT_PAGE_MARGIN_MM * 2;
+    const printableHeightMm = PAGE_MM.height - PRINT_PAGE_MARGIN_MM * 2;
+    const scale = Math.min(printableWidthMm / PAGE_MM.width, printableHeightMm / PAGE_MM.height);
+
+    return {
+      scale,
+      pageWidthMm: PAGE_MM.width * scale,
+      pageHeightMm: PAGE_MM.height * scale
+    };
+  }
+
+  function getPrintJsStyle(printMetrics) {
+    const pageWidth = printMetrics.pageWidthMm.toFixed(4);
+    const pageHeight = printMetrics.pageHeightMm.toFixed(4);
+
+    return `
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { margin: 0; padding: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      *, *::before, *::after { box-sizing: border-box; }
+      #printRoot { width: 100%; }
+      #printRoot .page-preview { width: ${pageWidth}mm; height: ${pageHeight}mm; margin: 0 auto; padding: 0; position: relative; box-sizing: border-box; overflow: hidden; break-after: page; page-break-after: always; }
+      #printRoot .page-preview + .page-preview { margin-top: 0; }
+      #printRoot .grid { position: absolute; display: grid; min-height: 0; overflow: hidden; }
+      #printRoot .tile { position: relative; overflow: hidden; background: #efe8dc; border: 1px solid rgba(40, 28, 20, 0.15); min-width: 0; min-height: 0; }
+      #printRoot .tile-number { position: absolute; z-index: 2; border-radius: 999px; padding: 0.16em 0.48em; font-family: Georgia, "Times New Roman", serif; font-weight: 700; letter-spacing: 0.02em; line-height: 1; color: var(--num-color, #ffffff); background-color: var(--num-bg, #111111); }
+      #printRoot .tile-number.top-left { top: 0.35em; left: 0.35em; }
+      #printRoot .tile-number.top-right { top: 0.35em; right: 0.35em; }
+      #printRoot .tile-number.bottom-left { bottom: 0.35em; left: 0.35em; }
+      #printRoot .tile-number.bottom-right { bottom: 0.35em; right: 0.35em; }
+      #printRoot .tile-number.center { top: 50%; left: 50%; transform: translate(-50%, -50%); }
+      #printRoot .tile.selected { outline: none; }
+      #printRoot .screen-hidden-page { display: block !important; }
+    `;
   }
 
   async function ingestFiles(fileList) {
@@ -359,11 +479,18 @@
       pageEl.style.setProperty("--gap-mm", String(state.gapMm));
       pageEl.style.setProperty("--margin-len", `${state.marginMm}mm`);
       pageEl.style.setProperty("--gap-len", `${state.gapMm}mm`);
+      pageEl.style.setProperty("--num-color", state.numColor);
+      pageEl.style.setProperty("--num-bg", state.numBg);
 
       const grid = document.createElement("div");
       grid.className = "grid";
       grid.style.gridTemplateColumns = `repeat(${state.cols}, minmax(0, 1fr))`;
       grid.style.gridTemplateRows = `repeat(${state.rows}, minmax(0, 1fr))`;
+      grid.style.gap = `${state.gapMm}mm`;
+      grid.style.top = `${state.marginMm}mm`;
+      grid.style.right = `${state.marginMm}mm`;
+      grid.style.bottom = `${state.marginMm}mm`;
+      grid.style.left = `${state.marginMm}mm`;
 
       for (let cell = 0; cell < cellsPerPage; cell += 1) {
         const photoIndex = startIndex + pageIndex * cellsPerPage + cell;
@@ -394,8 +521,6 @@
 
         const badge = document.createElement("span");
         badge.className = `tile-number ${state.numPosition}`;
-        badge.style.color = state.numColor;
-        badge.style.backgroundColor = state.numBg;
         badge.style.fontSize = `${state.numSizeMm}mm`;
         badge.textContent = String(photoIndex + 1);
         tile.appendChild(badge);
