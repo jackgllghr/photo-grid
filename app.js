@@ -37,6 +37,7 @@
   const ui = {
     folderInput: document.getElementById("folderInput"),
     filesInput: document.getElementById("filesInput"),
+    shuffleBtn: document.getElementById("shuffleBtn"),
     dropZone: document.getElementById("dropZone"),
     imageCount: document.getElementById("imageCount"),
     presetSelect: document.getElementById("presetSelect"),
@@ -101,6 +102,23 @@
 
     ui.dropZone.addEventListener("drop", (event) => {
       ingestFiles(event.dataTransfer.files);
+    });
+
+    ui.shuffleBtn.addEventListener("click", async () => {
+      if (state.photos.length < 2) return;
+      shufflePhotosInPlace(state.photos);
+
+      state.photos.forEach((photo, index) => {
+        photo.order = index;
+      });
+
+      state.selectedPhotoIndex = null;
+      state.startPhoto = 1;
+      state.previewPage = 1;
+
+      await persistPhotoOrder();
+      saveSettings();
+      render();
     });
 
     ui.presetSelect.addEventListener("change", () => {
@@ -818,6 +836,7 @@
     ui.previewPageStatus.textContent = `Page ${state.previewPage} of ${pageCount}`;
     ui.prevPageBtn.disabled = state.previewPage <= 1;
     ui.nextPageBtn.disabled = state.previewPage >= pageCount;
+    ui.shuffleBtn.disabled = state.photos.length < 2;
 
     const preset = `${state.cols}x${state.rows}`;
     ui.presetSelect.value = ["4x3", "5x3", "6x4"].includes(preset) ? preset : "custom";
@@ -878,6 +897,31 @@
       };
     }).catch(() => {
       // no-op: localStorage remains source of truth when IndexedDB update fails
+    });
+  }
+
+  async function persistPhotoOrder() {
+    const db = await getDb();
+    if (!db) return;
+
+    const orderById = new Map(state.photos.map((photo, index) => [photo.id, index]));
+
+    await runWriteTransaction(db, PHOTO_STORE, (store) => {
+      const cursorRequest = store.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+
+        const row = cursor.value;
+        if (orderById.has(row.id)) {
+          row.order = orderById.get(row.id);
+          cursor.update(row);
+        }
+
+        cursor.continue();
+      };
+    }).catch(() => {
+      // no-op: order is still updated for current session
     });
   }
 
@@ -1075,5 +1119,14 @@
     const safeSize = Number.isFinite(size) ? size : "na";
     const safeModified = Number.isFinite(lastModified) ? lastModified : "na";
     return `${name}::${safeSize}::${safeModified}`;
+  }
+
+  function shufflePhotosInPlace(photos) {
+    for (let i = photos.length - 1; i > 0; i -= 1) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = photos[i];
+      photos[i] = photos[j];
+      photos[j] = tmp;
+    }
   }
 })();
