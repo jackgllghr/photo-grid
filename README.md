@@ -7,6 +7,7 @@ Small offline web app that takes a folder of photos and builds a numbered photo 
 - Folder import (`webkitdirectory`) and drag/drop image import
 - One-click shuffle of photo order
 - One-click clear all photos
+- Replace one selected photo without changing tile numbering/order
 - A4 landscape print preview (`297mm x 210mm`)
 - Grid presets plus custom rows/columns
 - Per-tile crop editing (drag to reposition, wheel/slider to zoom)
@@ -34,8 +35,9 @@ Then open `http://localhost:8000`.
 
 1. Load photos with **Choose Photo Folder** or drag/drop.
 2. Select a tile and drag it to reposition the crop.
-3. Zoom with mouse wheel over a tile or with the zoom slider.
-4. Set **Starting Photo** and page mode (**Auto** or **Manual** page count).
-5. Tune grid/number settings.
-6. Use **Preview Page** to inspect each page before printing.
-7. Click **Print A4 Landscape**.
+3. (Optional) Use **Replace Selected Photo** to swap that tile image while keeping order.
+4. Zoom with mouse wheel over a tile or with the zoom slider.
+5. Set **Starting Photo** and page mode (**Auto** or **Manual** page count).
+6. Tune grid/number settings.
+7. Use **Preview Page** to inspect each page before printing.
+8. Click **Print A4 Landscape**.

@@ -62,6 +62,8 @@
     zoomRange: document.getElementById("zoomRange"),
     resetTile: document.getElementById("resetTile"),
     resetAll: document.getElementById("resetAll"),
+    replacePhotoBtn: document.getElementById("replacePhotoBtn"),
+    replacePhotoInput: document.getElementById("replacePhotoInput"),
     printBtn: document.getElementById("printBtn"),
     pagesRoot: document.getElementById("pagesRoot"),
     printRoot: document.getElementById("printRoot")
@@ -257,9 +259,69 @@
       render();
     });
 
+    ui.replacePhotoBtn.addEventListener("click", () => {
+      if (state.selectedPhotoIndex === null) return;
+      const selected = state.photos[state.selectedPhotoIndex];
+      if (!selected) return;
+      ui.replacePhotoInput.click();
+    });
+
+    ui.replacePhotoInput.addEventListener("change", async (event) => {
+      await replaceSelectedPhoto(event.target.files);
+      ui.replacePhotoInput.value = "";
+    });
+
     ui.printBtn.addEventListener("click", () => {
       printWithPrintJs();
     });
+  }
+
+  async function replaceSelectedPhoto(fileList) {
+    if (state.selectedPhotoIndex === null) return;
+
+    const targetIndex = state.selectedPhotoIndex;
+    const currentPhoto = state.photos[targetIndex];
+    if (!currentPhoto) return;
+
+    const file = Array.from(fileList || []).find((item) => item.type.startsWith("image/"));
+    if (!file) return;
+
+    const newSrc = URL.createObjectURL(file);
+
+    try {
+      const dims = await getImageDimensions(newSrc);
+      const nextPhoto = {
+        id: makePhotoId(file),
+        transformKey: makeTransformKey(file.name, file.size, file.lastModified),
+        name: file.name,
+        order: currentPhoto.order,
+        src: newSrc,
+        width: dims.width,
+        height: dims.height,
+        size: file.size,
+        lastModified: file.lastModified
+      };
+
+      const oldKey = getTransformKey(currentPhoto);
+      state.photos[targetIndex] = nextPhoto;
+      delete state.transforms[oldKey];
+      state.transforms[getTransformKey(nextPhoto)] = defaultTransform();
+      state.drag = null;
+
+      URL.revokeObjectURL(currentPhoto.src);
+
+      try {
+        await replacePersistedPhoto(currentPhoto.id, nextPhoto, file);
+      } catch (_error) {
+        ui.imageCount.textContent = "Photo replaced, but browser storage quota prevented offline persistence.";
+      }
+
+      saveTransforms();
+      saveSettings();
+      render();
+    } catch (_error) {
+      URL.revokeObjectURL(newSrc);
+    }
   }
 
   function printWithPrintJs() {
@@ -843,6 +905,7 @@
     ui.nextPageBtn.disabled = state.previewPage >= pageCount;
     ui.shuffleBtn.disabled = state.photos.length < 2;
     ui.clearPhotosBtn.disabled = state.photos.length === 0;
+    ui.replacePhotoBtn.disabled = state.selectedPhotoIndex === null || !state.photos[state.selectedPhotoIndex];
 
     const preset = `${state.cols}x${state.rows}`;
     ui.presetSelect.value = ["4x3", "5x3", "6x4"].includes(preset) ? preset : "custom";
@@ -1019,6 +1082,30 @@
           blob: photo.blob
         });
       }
+    });
+  }
+
+  async function replacePersistedPhoto(previousId, photo, blob) {
+    const db = await getDb();
+    if (!db) return;
+
+    await runWriteTransaction(db, PHOTO_STORE, (store) => {
+      if (previousId && previousId !== photo.id) {
+        store.delete(previousId);
+      }
+
+      store.put({
+        id: photo.id,
+        transformKey: photo.transformKey,
+        name: photo.name,
+        order: photo.order,
+        width: photo.width,
+        height: photo.height,
+        size: photo.size,
+        lastModified: photo.lastModified,
+        transform: defaultTransform(),
+        blob
+      });
     });
   }
 

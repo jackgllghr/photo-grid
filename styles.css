@@ -281,7 +281,7 @@ input[type="file"] {
 }
 
 .tile.selected {
-  outline: 3px solid #f0a77f;
+  outline: .5rem solid #4167ff;
   outline-offset: -3px;
 }
 
