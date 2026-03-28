@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Photo Grid Print Builder</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="controls print-hidden">
+        <h1>Photo Grid Print Builder</h1>
+        <p class="subhead">Offline A4 landscape collage with numbered tiles for photo guessing games.</p>
+
+        <section>
+          <h2>1) Add Photos</h2>
+          <label class="file-button" for="folderInput">Choose Photo Folder</label>
+          <input id="folderInput" type="file" accept="image/*" webkitdirectory multiple />
+
+          <label class="file-button secondary" for="filesInput">Or Choose Files</label>
+          <input id="filesInput" type="file" accept="image/*" multiple />
+
+          <div id="dropZone" class="drop-zone">Drop images here</div>
+          <p id="imageCount" class="meta">No photos loaded.</p>
+        </section>
+
+        <section>
+          <h2>2) Grid & Page</h2>
+          <div class="field-row">
+            <label for="presetSelect">Preset</label>
+            <select id="presetSelect">
+              <option value="4x3" selected>4 x 3 (12)</option>
+              <option value="5x3">5 x 3 (15)</option>
+              <option value="6x4">6 x 4 (24)</option>
+              <option value="custom">Custom</option>
+            </select>
+          </div>
+          <div class="field-row two-col">
+            <div>
+              <label for="colsInput">Columns</label>
+              <input id="colsInput" type="number" min="1" max="10" value="4" />
+            </div>
+            <div>
+              <label for="rowsInput">Rows</label>
+              <input id="rowsInput" type="number" min="1" max="10" value="3" />
+            </div>
+          </div>
+          <div class="field-row two-col">
+            <div>
+              <label for="marginInput">Margin (mm)</label>
+              <input id="marginInput" type="number" min="0" max="30" step="0.5" value="8" />
+            </div>
+            <div>
+              <label for="gapInput">Gap (mm)</label>
+              <input id="gapInput" type="number" min="0" max="20" step="0.5" value="3" />
+            </div>
+          </div>
+          <div class="field-row two-col">
+            <div>
+              <label for="startPhotoInput">Starting Photo</label>
+              <input id="startPhotoInput" type="number" min="1" step="1" value="1" />
+            </div>
+            <div>
+              <label for="pagesMode">Pages</label>
+              <select id="pagesMode">
+                <option value="auto" selected>Auto</option>
+                <option value="manual">Manual</option>
+              </select>
+            </div>
+          </div>
+          <div class="field-row two-col">
+            <div>
+              <label for="manualPagesInput">Page Count</label>
+              <input id="manualPagesInput" type="number" min="1" max="500" step="1" value="1" disabled />
+            </div>
+            <div></div>
+          </div>
+          <p id="pageSummary" class="meta">No pages generated yet.</p>
+        </section>
+
+        <section>
+          <h2>3) Number Style</h2>
+          <div class="field-row two-col">
+            <div>
+              <label for="numPosition">Position</label>
+              <select id="numPosition">
+                <option value="top-left" selected>Top Left</option>
+                <option value="top-right">Top Right</option>
+                <option value="bottom-left">Bottom Left</option>
+                <option value="bottom-right">Bottom Right</option>
+                <option value="center">Center</option>
+              </select>
+            </div>
+            <div>
+              <label for="numSize">Size (mm)</label>
+              <input id="numSize" type="number" min="2" max="16" step="0.5" value="6" />
+            </div>
+          </div>
+          <div class="field-row two-col">
+            <div>
+              <label for="numColor">Text</label>
+              <input id="numColor" type="color" value="#ffffff" />
+            </div>
+            <div>
+              <label for="numBg">Badge</label>
+              <input id="numBg" type="color" value="#111111" />
+            </div>
+          </div>
+        </section>
+
+        <section>
+          <h2>4) Edit Selected Tile</h2>
+          <p id="selectedInfo" class="meta">Select a tile to adjust crop and position.</p>
+          <div class="field-row">
+            <label for="zoomRange">Zoom</label>
+            <input id="zoomRange" type="range" min="1" max="3" step="0.01" value="1" />
+          </div>
+          <div class="button-row">
+            <button id="resetTile" type="button">Reset Tile</button>
+            <button id="resetAll" type="button" class="secondary">Reset All</button>
+          </div>
+          <small class="hint">Tip: Drag inside a tile to reposition. Use mouse wheel to zoom selected tile.</small>
+        </section>
+
+        <section class="actions">
+          <button id="printBtn" type="button">Print A4 Landscape</button>
+        </section>
+      </aside>
+
+      <section class="preview-wrap">
+        <div class="preview-nav print-hidden">
+          <button id="prevPageBtn" type="button" class="secondary">Prev</button>
+          <label for="previewPageInput">Preview Page</label>
+          <input id="previewPageInput" type="number" min="1" step="1" value="1" />
+          <button id="nextPageBtn" type="button" class="secondary">Next</button>
+          <span id="previewPageStatus" class="meta">Page 1 of 1</span>
+        </div>
+        <div id="pagesRoot" class="pages-root" aria-label="A4 landscape print preview"></div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

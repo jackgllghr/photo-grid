@@ -1,0 +1,954 @@
+(function () {
+  const PAGE_MM = { width: 297, height: 210 };
+  const SETTINGS_KEY = "photo-grid-settings-v2";
+  const TRANSFORMS_KEY = "photo-grid-transforms-v2";
+  const DB_NAME = "photo-grid-offline-v1";
+  const DB_VERSION = 1;
+  const PHOTO_STORE = "photos";
+
+  const defaults = {
+    rows: 3,
+    cols: 4,
+    marginMm: 8,
+    gapMm: 3,
+    numPosition: "top-left",
+    numSizeMm: 6,
+    numColor: "#ffffff",
+    numBg: "#111111",
+    startPhoto: 1,
+    pagesMode: "auto",
+    manualPages: 1,
+    previewPage: 1
+  };
+
+  const state = {
+    ...defaults,
+    ...loadSettings(),
+    photos: [],
+    transforms: loadTransforms(),
+    selectedPhotoIndex: null,
+    drag: null,
+    persistenceReady: false
+  };
+
+  let dbPromise = null;
+
+  const ui = {
+    folderInput: document.getElementById("folderInput"),
+    filesInput: document.getElementById("filesInput"),
+    dropZone: document.getElementById("dropZone"),
+    imageCount: document.getElementById("imageCount"),
+    presetSelect: document.getElementById("presetSelect"),
+    rowsInput: document.getElementById("rowsInput"),
+    colsInput: document.getElementById("colsInput"),
+    marginInput: document.getElementById("marginInput"),
+    gapInput: document.getElementById("gapInput"),
+    startPhotoInput: document.getElementById("startPhotoInput"),
+    pagesMode: document.getElementById("pagesMode"),
+    manualPagesInput: document.getElementById("manualPagesInput"),
+    previewPageInput: document.getElementById("previewPageInput"),
+    prevPageBtn: document.getElementById("prevPageBtn"),
+    nextPageBtn: document.getElementById("nextPageBtn"),
+    previewPageStatus: document.getElementById("previewPageStatus"),
+    pageSummary: document.getElementById("pageSummary"),
+    numPosition: document.getElementById("numPosition"),
+    numSize: document.getElementById("numSize"),
+    numColor: document.getElementById("numColor"),
+    numBg: document.getElementById("numBg"),
+    selectedInfo: document.getElementById("selectedInfo"),
+    zoomRange: document.getElementById("zoomRange"),
+    resetTile: document.getElementById("resetTile"),
+    resetAll: document.getElementById("resetAll"),
+    printBtn: document.getElementById("printBtn"),
+    pagesRoot: document.getElementById("pagesRoot")
+  };
+
+  start();
+
+  async function start() {
+    bindControls();
+    window.addEventListener("beforeprint", applyPrintSizing);
+    window.addEventListener("afterprint", clearPrintSizing);
+    syncInputsFromState();
+    render();
+    await restorePhotosFromPersistence();
+  }
+
+  function bindControls() {
+    ui.folderInput.addEventListener("change", (event) => {
+      ingestFiles(event.target.files);
+      ui.folderInput.value = "";
+    });
+
+    ui.filesInput.addEventListener("change", (event) => {
+      ingestFiles(event.target.files);
+      ui.filesInput.value = "";
+    });
+
+    ["dragenter", "dragover"].forEach((name) => {
+      ui.dropZone.addEventListener(name, (event) => {
+        event.preventDefault();
+        ui.dropZone.classList.add("dragging");
+      });
+    });
+
+    ["dragleave", "drop"].forEach((name) => {
+      ui.dropZone.addEventListener(name, (event) => {
+        event.preventDefault();
+        ui.dropZone.classList.remove("dragging");
+      });
+    });
+
+    ui.dropZone.addEventListener("drop", (event) => {
+      ingestFiles(event.dataTransfer.files);
+    });
+
+    ui.presetSelect.addEventListener("change", () => {
+      if (ui.presetSelect.value === "custom") return;
+      const [cols, rows] = ui.presetSelect.value.split("x").map(Number);
+      state.cols = cols;
+      state.rows = rows;
+      saveSettings();
+      syncInputsFromState();
+      render();
+    });
+
+    ui.rowsInput.addEventListener("input", () => {
+      state.rows = clampInt(ui.rowsInput.value, 1, 10);
+      ui.presetSelect.value = "custom";
+      saveSettings();
+      render();
+    });
+
+    ui.colsInput.addEventListener("input", () => {
+      state.cols = clampInt(ui.colsInput.value, 1, 10);
+      ui.presetSelect.value = "custom";
+      saveSettings();
+      render();
+    });
+
+    ui.marginInput.addEventListener("input", () => {
+      state.marginMm = clampFloat(ui.marginInput.value, 0, 30);
+      saveSettings();
+      render();
+    });
+
+    ui.gapInput.addEventListener("input", () => {
+      state.gapMm = clampFloat(ui.gapInput.value, 0, 20);
+      saveSettings();
+      render();
+    });
+
+    ui.startPhotoInput.addEventListener("input", () => {
+      state.startPhoto = clampInt(ui.startPhotoInput.value, 1, getMaxStartPhoto());
+      state.previewPage = 1;
+      saveSettings();
+      render();
+    });
+
+    ui.pagesMode.addEventListener("change", () => {
+      state.pagesMode = ui.pagesMode.value === "manual" ? "manual" : "auto";
+      if (state.pagesMode === "auto") {
+        state.previewPage = clampInt(state.previewPage, 1, getAutoPageCount());
+      }
+      saveSettings();
+      render();
+    });
+
+    ui.manualPagesInput.addEventListener("input", () => {
+      state.manualPages = clampInt(ui.manualPagesInput.value, 1, 500);
+      state.previewPage = clampInt(state.previewPage, 1, getPageCount());
+      saveSettings();
+      render();
+    });
+
+    ui.previewPageInput.addEventListener("input", () => {
+      state.previewPage = clampInt(ui.previewPageInput.value, 1, getPageCount());
+      saveSettings();
+      render();
+    });
+
+    ui.prevPageBtn.addEventListener("click", () => {
+      state.previewPage = clampInt(state.previewPage - 1, 1, getPageCount());
+      saveSettings();
+      render();
+    });
+
+    ui.nextPageBtn.addEventListener("click", () => {
+      state.previewPage = clampInt(state.previewPage + 1, 1, getPageCount());
+      saveSettings();
+      render();
+    });
+
+    ui.numPosition.addEventListener("change", () => {
+      state.numPosition = ui.numPosition.value;
+      saveSettings();
+      render();
+    });
+
+    ui.numSize.addEventListener("input", () => {
+      state.numSizeMm = clampFloat(ui.numSize.value, 2, 16);
+      saveSettings();
+      render();
+    });
+
+    ui.numColor.addEventListener("input", () => {
+      state.numColor = ui.numColor.value;
+      saveSettings();
+      render();
+    });
+
+    ui.numBg.addEventListener("input", () => {
+      state.numBg = ui.numBg.value;
+      saveSettings();
+      render();
+    });
+
+    ui.zoomRange.addEventListener("input", () => {
+      if (state.selectedPhotoIndex === null) return;
+      const photo = state.photos[state.selectedPhotoIndex];
+      if (!photo) return;
+      const transform = getTransform(photo);
+      transform.zoom = clampFloat(ui.zoomRange.value, 1, 3);
+      clampTransform(photo, transform);
+      saveTransforms();
+      render();
+    });
+
+    ui.resetTile.addEventListener("click", () => {
+      if (state.selectedPhotoIndex === null) return;
+      const photo = state.photos[state.selectedPhotoIndex];
+      if (!photo) return;
+      state.transforms[getTransformKey(photo)] = defaultTransform();
+      saveTransforms();
+      render();
+    });
+
+    ui.resetAll.addEventListener("click", () => {
+      const next = {};
+      for (const photo of state.photos) {
+        next[getTransformKey(photo)] = defaultTransform();
+      }
+      state.transforms = next;
+      saveTransforms();
+      render();
+    });
+
+    ui.printBtn.addEventListener("click", () => {
+      applyPrintSizing();
+      window.print();
+    });
+  }
+
+  function applyPrintSizing() {
+    const pages = ui.pagesRoot.querySelectorAll(".page-preview");
+    pages.forEach((page) => {
+      const width = page.getBoundingClientRect().width;
+      if (width > 0) {
+        page.style.height = `${(width * 210) / 297}px`;
+      }
+    });
+  }
+
+  function clearPrintSizing() {
+    const pages = ui.pagesRoot.querySelectorAll(".page-preview");
+    pages.forEach((page) => {
+      page.style.height = "";
+    });
+  }
+
+  async function ingestFiles(fileList) {
+    const files = Array.from(fileList || []).filter((file) => file.type.startsWith("image/"));
+    if (!files.length) return;
+
+    files.sort((a, b) => {
+      const left = (a.webkitRelativePath || a.name).toLowerCase();
+      const right = (b.webkitRelativePath || b.name).toLowerCase();
+      return left.localeCompare(right);
+    });
+
+    clearPhotoUrls();
+
+    const loaded = await Promise.all(
+      files.map(async (file) => {
+        const src = URL.createObjectURL(file);
+        try {
+          const dims = await getImageDimensions(src);
+          return {
+            id: makePhotoId(file),
+            transformKey: makeTransformKey(file.name, file.size, file.lastModified),
+            name: file.name,
+            order: 0,
+            src,
+            width: dims.width,
+            height: dims.height,
+            size: file.size,
+            lastModified: file.lastModified,
+            blob: file
+          };
+        } catch (_error) {
+          URL.revokeObjectURL(src);
+          return null;
+        }
+      })
+    );
+
+    state.photos = loaded.filter(Boolean).map((photo, index) => ({
+      id: photo.id,
+      transformKey: photo.transformKey,
+      name: photo.name,
+      order: index,
+      src: photo.src,
+      width: photo.width,
+      height: photo.height,
+      size: photo.size,
+      lastModified: photo.lastModified
+    }));
+    state.selectedPhotoIndex = null;
+    state.startPhoto = clampInt(state.startPhoto, 1, getMaxStartPhoto());
+    state.previewPage = 1;
+
+    try {
+      await persistPhotos(
+        loaded
+          .filter(Boolean)
+          .map((photo, index) => ({
+            id: photo.id,
+            transformKey: photo.transformKey,
+            name: photo.name,
+            order: index,
+            width: photo.width,
+            height: photo.height,
+            size: photo.size,
+            lastModified: photo.lastModified,
+            transform: resolveExistingTransform(photo) || defaultTransform(),
+            blob: photo.blob
+          }))
+      );
+    } catch (_error) {
+      ui.imageCount.textContent = "Photos loaded, but browser storage quota prevented offline persistence.";
+    }
+
+    ensureTransformsForCurrentPhotos();
+    saveTransforms();
+    saveSettings();
+    render();
+  }
+
+  function render() {
+    ensureTransformsForCurrentPhotos();
+
+    const pageCount = getPageCount();
+    const cellsPerPage = getCellsPerPage();
+    const startIndex = state.startPhoto - 1;
+    const maxStart = getMaxStartPhoto();
+
+    state.startPhoto = clampInt(state.startPhoto, 1, maxStart);
+    state.previewPage = clampInt(state.previewPage, 1, pageCount);
+
+    ui.pagesRoot.innerHTML = "";
+
+    for (let pageIndex = 0; pageIndex < pageCount; pageIndex += 1) {
+      const pageEl = document.createElement("div");
+      pageEl.className = "page-preview";
+      if (pageIndex + 1 !== state.previewPage) {
+        pageEl.classList.add("screen-hidden-page");
+      }
+
+      pageEl.style.setProperty("--margin-mm", String(state.marginMm));
+      pageEl.style.setProperty("--gap-mm", String(state.gapMm));
+      pageEl.style.setProperty("--margin-len", `${state.marginMm}mm`);
+      pageEl.style.setProperty("--gap-len", `${state.gapMm}mm`);
+
+      const grid = document.createElement("div");
+      grid.className = "grid";
+      grid.style.gridTemplateColumns = `repeat(${state.cols}, minmax(0, 1fr))`;
+      grid.style.gridTemplateRows = `repeat(${state.rows}, minmax(0, 1fr))`;
+
+      for (let cell = 0; cell < cellsPerPage; cell += 1) {
+        const photoIndex = startIndex + pageIndex * cellsPerPage + cell;
+        const photo = state.photos[photoIndex];
+
+        const tile = document.createElement("div");
+        tile.className = "tile";
+
+        if (!photo) {
+          tile.classList.add("empty");
+          tile.textContent = "No photo";
+        } else {
+          tile.dataset.photoIndex = String(photoIndex);
+          tile.addEventListener("click", onTileClick);
+          tile.addEventListener("pointerdown", onTilePointerDown);
+          tile.addEventListener("wheel", onTileWheel, { passive: false });
+
+          if (state.selectedPhotoIndex === photoIndex) {
+            tile.classList.add("selected");
+          }
+
+          const img = document.createElement("img");
+          img.src = photo.src;
+          img.alt = photo.name;
+          applyImageStyle(img, photo);
+          tile.appendChild(img);
+        }
+
+        const badge = document.createElement("span");
+        badge.className = `tile-number ${state.numPosition}`;
+        badge.style.color = state.numColor;
+        badge.style.backgroundColor = state.numBg;
+        badge.style.fontSize = `${state.numSizeMm}mm`;
+        badge.textContent = String(photoIndex + 1);
+        tile.appendChild(badge);
+
+        grid.appendChild(tile);
+      }
+
+      pageEl.appendChild(grid);
+      ui.pagesRoot.appendChild(pageEl);
+    }
+
+    const firstVisible = startIndex + 1;
+    const lastVisible = Math.min(state.photos.length, startIndex + pageCount * cellsPerPage);
+    ui.pageSummary.textContent = state.photos.length
+      ? `Showing photos ${firstVisible}-${lastVisible} of ${state.photos.length}. Printing ${pageCount} page${pageCount === 1 ? "" : "s"}.`
+      : "No photos loaded.";
+
+    ui.imageCount.textContent = `${state.photos.length} photo${state.photos.length === 1 ? "" : "s"} loaded.`;
+
+    updateSelectedInfo();
+    syncInputsFromState();
+    highlightSelectedTiles();
+  }
+
+  function onTileClick(event) {
+    const tile = event.currentTarget;
+    const photoIndex = Number(tile.dataset.photoIndex);
+    if (!Number.isInteger(photoIndex)) return;
+    setSelectedPhoto(photoIndex);
+  }
+
+  function onTilePointerDown(event) {
+    const tile = event.currentTarget;
+    const photoIndex = Number(tile.dataset.photoIndex);
+    if (!Number.isInteger(photoIndex)) return;
+
+    const photo = state.photos[photoIndex];
+    if (!photo) return;
+
+    setSelectedPhoto(photoIndex);
+    const transform = getTransform(photo);
+
+    state.drag = {
+      photoIndex,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      startX: transform.x,
+      startY: transform.y
+    };
+
+    tile.setPointerCapture(event.pointerId);
+    tile.addEventListener("pointermove", onTilePointerMove);
+    tile.addEventListener("pointerup", onTilePointerUp);
+    tile.addEventListener("pointercancel", onTilePointerUp);
+
+  }
+
+  function onTilePointerMove(event) {
+    if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+
+    const tile = event.currentTarget;
+    const photo = state.photos[state.drag.photoIndex];
+    if (!photo) return;
+
+    const rect = tile.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const transform = getTransform(photo);
+    const deltaXPct = ((event.clientX - state.drag.startClientX) / rect.width) * 100;
+    const deltaYPct = ((event.clientY - state.drag.startClientY) / rect.height) * 100;
+
+    transform.x = state.drag.startX + deltaXPct;
+    transform.y = state.drag.startY + deltaYPct;
+    clampTransform(photo, transform);
+
+    const img = tile.querySelector("img");
+    if (img) {
+      applyImageStyle(img, photo);
+    }
+
+    updateSelectedInfo();
+  }
+
+  function onTilePointerUp(event) {
+    if (!state.drag || state.drag.pointerId !== event.pointerId) return;
+
+    const tile = event.currentTarget;
+    tile.removeEventListener("pointermove", onTilePointerMove);
+    tile.removeEventListener("pointerup", onTilePointerUp);
+    tile.removeEventListener("pointercancel", onTilePointerUp);
+
+    state.drag = null;
+    saveTransforms();
+  }
+
+  function onTileWheel(event) {
+    event.preventDefault();
+
+    const tile = event.currentTarget;
+    const photoIndex = Number(tile.dataset.photoIndex);
+    if (!Number.isInteger(photoIndex)) return;
+
+    const photo = state.photos[photoIndex];
+    if (!photo) return;
+
+    setSelectedPhoto(photoIndex);
+    const transform = getTransform(photo);
+    transform.zoom = clampFloat(transform.zoom - event.deltaY * 0.0015, 1, 3);
+    clampTransform(photo, transform);
+    saveTransforms();
+    updatePhotoTiles(photoIndex);
+    updateSelectedInfo();
+  }
+
+  function setSelectedPhoto(photoIndex) {
+    state.selectedPhotoIndex = photoIndex;
+    highlightSelectedTiles();
+    updateSelectedInfo();
+  }
+
+  function highlightSelectedTiles() {
+    const allTiles = ui.pagesRoot.querySelectorAll(".tile[data-photo-index]");
+    allTiles.forEach((tile) => {
+      const index = Number(tile.dataset.photoIndex);
+      tile.classList.toggle("selected", index === state.selectedPhotoIndex);
+    });
+  }
+
+  function updatePhotoTiles(photoIndex) {
+    const photo = state.photos[photoIndex];
+    if (!photo) return;
+    const imgs = ui.pagesRoot.querySelectorAll(`.tile[data-photo-index="${photoIndex}"] img`);
+    imgs.forEach((img) => {
+      applyImageStyle(img, photo);
+    });
+  }
+
+  function applyImageStyle(img, photo) {
+    const transform = getTransform(photo);
+    const fit = getFitMetrics(photo, transform.zoom);
+    img.style.width = `${fit.widthPct}%`;
+    img.style.height = `${fit.heightPct}%`;
+    img.style.left = `${50 + transform.x}%`;
+    img.style.top = `${50 + transform.y}%`;
+  }
+
+  function getFitMetrics(photo, zoom) {
+    const cellRatio = getCellRatio();
+    const imageRatio = photo.width / photo.height;
+
+    let baseWidthPct;
+    let baseHeightPct;
+
+    if (imageRatio >= cellRatio) {
+      baseHeightPct = 100;
+      baseWidthPct = (imageRatio / cellRatio) * 100;
+    } else {
+      baseWidthPct = 100;
+      baseHeightPct = (cellRatio / imageRatio) * 100;
+    }
+
+    return {
+      widthPct: baseWidthPct * zoom,
+      heightPct: baseHeightPct * zoom
+    };
+  }
+
+  function clampTransform(photo, transform) {
+    transform.zoom = clampFloat(transform.zoom, 1, 3);
+
+    const fit = getFitMetrics(photo, transform.zoom);
+    const maxX = Math.max(0, (fit.widthPct - 100) / 2);
+    const maxY = Math.max(0, (fit.heightPct - 100) / 2);
+
+    transform.x = clampFloat(transform.x, -maxX, maxX);
+    transform.y = clampFloat(transform.y, -maxY, maxY);
+  }
+
+  function getTransform(photo) {
+    const key = getTransformKey(photo);
+    if (!state.transforms[key]) {
+      const existing = resolveExistingTransform(photo);
+      state.transforms[key] = existing || defaultTransform();
+    }
+    return state.transforms[key];
+  }
+
+  function defaultTransform() {
+    return { x: 0, y: 0, zoom: 1 };
+  }
+
+  function ensureTransformsForCurrentPhotos() {
+    const next = {};
+    for (const photo of state.photos) {
+      const key = getTransformKey(photo);
+      const existing = resolveExistingTransform(photo);
+      if (existing) {
+        next[key] = {
+          x: clampFloat(existing.x, -300, 300),
+          y: clampFloat(existing.y, -300, 300),
+          zoom: clampFloat(existing.zoom, 1, 3)
+        };
+      } else {
+        next[key] = defaultTransform();
+      }
+      clampTransform(photo, next[key]);
+    }
+    state.transforms = next;
+  }
+
+  function getTransformKey(photo) {
+    return photo.transformKey || photo.id || photo.name;
+  }
+
+  function resolveExistingTransform(photo) {
+    const candidates = [
+      getTransformKey(photo),
+      photo.id,
+      makeTransformKey(photo.name, photo.size, photo.lastModified),
+      photo.name
+    ].filter(Boolean);
+
+    for (const key of candidates) {
+      if (state.transforms[key]) {
+        return state.transforms[key];
+      }
+    }
+
+    return null;
+  }
+
+  function getPageCount() {
+    if (state.pagesMode === "manual") {
+      return clampInt(state.manualPages, 1, 500);
+    }
+    return getAutoPageCount();
+  }
+
+  function getAutoPageCount() {
+    const cellsPerPage = getCellsPerPage();
+    const remaining = Math.max(0, state.photos.length - (state.startPhoto - 1));
+    return Math.max(1, Math.ceil(remaining / cellsPerPage));
+  }
+
+  function getCellsPerPage() {
+    return Math.max(1, state.rows * state.cols);
+  }
+
+  function getCellRatio() {
+    const innerW = PAGE_MM.width - state.marginMm * 2 - state.gapMm * (state.cols - 1);
+    const innerH = PAGE_MM.height - state.marginMm * 2 - state.gapMm * (state.rows - 1);
+    const cellW = Math.max(1, innerW / state.cols);
+    const cellH = Math.max(1, innerH / state.rows);
+    return cellW / cellH;
+  }
+
+  function getMaxStartPhoto() {
+    return Math.max(1, state.photos.length || 1);
+  }
+
+  function updateSelectedInfo() {
+    if (state.selectedPhotoIndex === null) {
+      ui.selectedInfo.textContent = "Select a photo tile to adjust crop and position.";
+      ui.zoomRange.disabled = true;
+      return;
+    }
+
+    const photo = state.photos[state.selectedPhotoIndex];
+    if (!photo) {
+      ui.selectedInfo.textContent = "Selected tile is empty.";
+      ui.zoomRange.disabled = true;
+      return;
+    }
+
+    const transform = getTransform(photo);
+    ui.zoomRange.disabled = false;
+    ui.zoomRange.value = String(transform.zoom);
+    ui.selectedInfo.textContent = `Photo ${state.selectedPhotoIndex + 1}: ${photo.name} | zoom ${transform.zoom.toFixed(2)} | x ${transform.x.toFixed(1)}% y ${transform.y.toFixed(1)}%`;
+  }
+
+  function syncInputsFromState() {
+    const pageCount = getPageCount();
+    ui.rowsInput.value = String(state.rows);
+    ui.colsInput.value = String(state.cols);
+    ui.marginInput.value = String(state.marginMm);
+    ui.gapInput.value = String(state.gapMm);
+    ui.startPhotoInput.value = String(state.startPhoto);
+    ui.startPhotoInput.max = String(getMaxStartPhoto());
+    ui.pagesMode.value = state.pagesMode;
+    ui.manualPagesInput.value = String(state.manualPages);
+    ui.manualPagesInput.disabled = state.pagesMode !== "manual";
+    ui.previewPageInput.value = String(state.previewPage);
+    ui.previewPageInput.max = String(pageCount);
+    ui.previewPageStatus.textContent = `Page ${state.previewPage} of ${pageCount}`;
+    ui.prevPageBtn.disabled = state.previewPage <= 1;
+    ui.nextPageBtn.disabled = state.previewPage >= pageCount;
+
+    const preset = `${state.cols}x${state.rows}`;
+    ui.presetSelect.value = ["4x3", "5x3", "6x4"].includes(preset) ? preset : "custom";
+
+    ui.numPosition.value = state.numPosition;
+    ui.numSize.value = String(state.numSizeMm);
+    ui.numColor.value = state.numColor;
+    ui.numBg.value = state.numBg;
+  }
+
+  function saveSettings() {
+    const snapshot = {
+      rows: state.rows,
+      cols: state.cols,
+      marginMm: state.marginMm,
+      gapMm: state.gapMm,
+      numPosition: state.numPosition,
+      numSizeMm: state.numSizeMm,
+      numColor: state.numColor,
+      numBg: state.numBg,
+      startPhoto: state.startPhoto,
+      pagesMode: state.pagesMode,
+      manualPages: state.manualPages,
+      previewPage: state.previewPage
+    };
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(snapshot));
+  }
+
+  function saveTransforms() {
+    localStorage.setItem(TRANSFORMS_KEY, JSON.stringify(state.transforms));
+    persistTransformsToPhotoStore();
+  }
+
+  async function persistTransformsToPhotoStore() {
+    const db = await getDb();
+    if (!db) return;
+
+    runWriteTransaction(db, PHOTO_STORE, (store) => {
+      const cursorRequest = store.openCursor();
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) return;
+
+        const row = cursor.value;
+        const key =
+          row.transformKey || makeTransformKey(row.name, row.size, row.lastModified) || row.id || row.name;
+        const transform = state.transforms[key];
+        if (transform) {
+          row.transform = {
+            x: clampFloat(transform.x, -300, 300),
+            y: clampFloat(transform.y, -300, 300),
+            zoom: clampFloat(transform.zoom, 1, 3)
+          };
+          cursor.update(row);
+        }
+
+        cursor.continue();
+      };
+    }).catch(() => {
+      // no-op: localStorage remains source of truth when IndexedDB update fails
+    });
+  }
+
+  async function restorePhotosFromPersistence() {
+    const records = await loadPersistedPhotos();
+    if (!records.length) {
+      state.persistenceReady = true;
+      return;
+    }
+
+    clearPhotoUrls();
+
+    state.photos = records.map((record) => ({
+      id: record.id,
+      transformKey: record.transformKey || makeTransformKey(record.name, record.size, record.lastModified),
+      name: record.name,
+      order: record.order,
+      width: record.width,
+      height: record.height,
+      size: record.size,
+      lastModified: record.lastModified,
+      src: URL.createObjectURL(record.blob)
+    }));
+
+    for (const record of records) {
+      if (!record) continue;
+      const key = record.transformKey || makeTransformKey(record.name, record.size, record.lastModified);
+      if (!key || !record.transform) continue;
+      state.transforms[key] = {
+        x: clampFloat(record.transform.x, -300, 300),
+        y: clampFloat(record.transform.y, -300, 300),
+        zoom: clampFloat(record.transform.zoom, 1, 3)
+      };
+    }
+
+    state.photos.sort((a, b) => a.order - b.order);
+    state.selectedPhotoIndex = null;
+    state.startPhoto = clampInt(state.startPhoto, 1, getMaxStartPhoto());
+    state.previewPage = clampInt(state.previewPage, 1, getPageCount());
+    state.persistenceReady = true;
+
+    ensureTransformsForCurrentPhotos();
+    saveTransforms();
+    saveSettings();
+    render();
+  }
+
+  async function persistPhotos(photos) {
+    const db = await getDb();
+    if (!db) return;
+
+    await runWriteTransaction(db, PHOTO_STORE, (store) => {
+      store.clear();
+      for (const photo of photos) {
+        store.put({
+          id: photo.id,
+          transformKey: photo.transformKey,
+          name: photo.name,
+          order: photo.order,
+          width: photo.width,
+          height: photo.height,
+          size: photo.size,
+          lastModified: photo.lastModified,
+          transform: photo.transform,
+          blob: photo.blob
+        });
+      }
+    });
+  }
+
+  async function loadPersistedPhotos() {
+    const db = await getDb();
+    if (!db) return [];
+
+    return new Promise((resolve) => {
+      const tx = db.transaction(PHOTO_STORE, "readonly");
+      const store = tx.objectStore(PHOTO_STORE);
+      const req = store.getAll();
+
+      req.onsuccess = () => {
+        const rows = Array.isArray(req.result) ? req.result : [];
+        resolve(
+          rows
+            .filter((row) => row && row.blob)
+            .sort((a, b) => (a.order || 0) - (b.order || 0))
+        );
+      };
+
+      req.onerror = () => resolve([]);
+      tx.onerror = () => resolve([]);
+    });
+  }
+
+  function runWriteTransaction(db, storeName, writer) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, "readwrite");
+      const store = tx.objectStore(storeName);
+
+      try {
+        writer(store);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error || new Error("IndexedDB write failed"));
+      tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
+    });
+  }
+
+  function getDb() {
+    if (!("indexedDB" in window)) {
+      return Promise.resolve(null);
+    }
+
+    if (dbPromise) {
+      return dbPromise;
+    }
+
+    dbPromise = new Promise((resolve) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(PHOTO_STORE)) {
+          db.createObjectStore(PHOTO_STORE, { keyPath: "id" });
+        }
+      };
+
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => resolve(null);
+      request.onblocked = () => resolve(null);
+    });
+
+    return dbPromise;
+  }
+
+  function loadSettings() {
+    return loadJson(SETTINGS_KEY, defaults);
+  }
+
+  function loadTransforms() {
+    return loadJson(TRANSFORMS_KEY, {});
+  }
+
+  function loadJson(key, fallback) {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    try {
+      const parsed = JSON.parse(raw);
+      if (fallback && typeof fallback === "object" && !Array.isArray(fallback)) {
+        return { ...fallback, ...parsed };
+      }
+      return parsed;
+    } catch (_error) {
+      return fallback;
+    }
+  }
+
+  function clampInt(value, min, max) {
+    const n = Number.parseInt(value, 10);
+    if (Number.isNaN(n)) return min;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function clampFloat(value, min, max) {
+    const n = Number.parseFloat(value);
+    if (Number.isNaN(n)) return min;
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function clearPhotoUrls() {
+    for (const photo of state.photos) {
+      URL.revokeObjectURL(photo.src);
+    }
+  }
+
+  function getImageDimensions(src) {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+      image.onerror = reject;
+      image.src = src;
+    });
+  }
+
+  function makePhotoId(file) {
+    const path = file.webkitRelativePath || file.name;
+    return `${path}::${file.size}::${file.lastModified}`;
+  }
+
+  function makeTransformKey(name, size, lastModified) {
+    if (!name) return null;
+    const safeSize = Number.isFinite(size) ? size : "na";
+    const safeModified = Number.isFinite(lastModified) ? lastModified : "na";
+    return `${name}::${safeSize}::${safeModified}`;
+  }
+})();
