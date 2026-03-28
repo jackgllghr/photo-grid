@@ -38,6 +38,7 @@
     folderInput: document.getElementById("folderInput"),
     filesInput: document.getElementById("filesInput"),
     shuffleBtn: document.getElementById("shuffleBtn"),
+    clearPhotosBtn: document.getElementById("clearPhotosBtn"),
     dropZone: document.getElementById("dropZone"),
     imageCount: document.getElementById("imageCount"),
     presetSelect: document.getElementById("presetSelect"),
@@ -119,6 +120,10 @@
       await persistPhotoOrder();
       saveSettings();
       render();
+    });
+
+    ui.clearPhotosBtn.addEventListener("click", async () => {
+      await clearAllPhotos();
     });
 
     ui.presetSelect.addEventListener("change", () => {
@@ -837,6 +842,7 @@
     ui.prevPageBtn.disabled = state.previewPage <= 1;
     ui.nextPageBtn.disabled = state.previewPage >= pageCount;
     ui.shuffleBtn.disabled = state.photos.length < 2;
+    ui.clearPhotosBtn.disabled = state.photos.length === 0;
 
     const preset = `${state.cols}x${state.rows}`;
     ui.presetSelect.value = ["4x3", "5x3", "6x4"].includes(preset) ? preset : "custom";
@@ -923,6 +929,30 @@
     }).catch(() => {
       // no-op: order is still updated for current session
     });
+  }
+
+  async function clearAllPhotos() {
+    clearPhotoUrls();
+    state.photos = [];
+    state.transforms = {};
+    state.selectedPhotoIndex = null;
+    state.drag = null;
+    state.startPhoto = 1;
+    state.previewPage = 1;
+
+    localStorage.removeItem(TRANSFORMS_KEY);
+
+    const db = await getDb();
+    if (db) {
+      await runWriteTransaction(db, PHOTO_STORE, (store) => {
+        store.clear();
+      }).catch(() => {
+        // no-op: current session still cleared
+      });
+    }
+
+    saveSettings();
+    render();
   }
 
   async function restorePhotosFromPersistence() {

@@ -6,6 +6,7 @@ Small offline web app that takes a folder of photos and builds a numbered photo 
 
 - Folder import (`webkitdirectory`) and drag/drop image import
 - One-click shuffle of photo order
+- One-click clear all photos
 - A4 landscape print preview (`297mm x 210mm`)
 - Grid presets plus custom rows/columns
 - Per-tile crop editing (drag to reposition, wheel/slider to zoom)
